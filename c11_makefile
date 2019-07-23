@@ -1,0 +1,64 @@
+# Derived from: https://spin.atomicobject.com/2016/08/26/makefile-c-projects/
+#     See also: https://stackoverflow.com/a/27794283
+EXE := my_executable
+
+SRCDIR := ./src
+OUTDIR := ./build
+
+SRCS := $(wildcard $(SRCDIR)/*.c) $(wildcard $(SRCDIR)/**/*.c)
+OBJS := $(patsubst $(SRCDIR)%,$(OUTDIR)%,$(SRCS:.c=.o))
+
+SRCDIR_SUBDIRS := $(shell find $(SRCDIR) -type d)
+OUTDIR_SUBDIRS := $(patsubst $(SRCDIR)%,$(OUTDIR)%,$(SRCDIR_SUBDIRS))
+
+CC := clang
+WARNINGS := -Wall -Wextra -Wswitch -Wconversion -Wpedantic \
+	-Wparentheses -Wshadow -Wfloat-equal -Wmissing-noreturn \
+	-Werror=implicit-function-declaration
+
+ifeq ($(CC),gcc)
+	WARNINGS += -Wsuggest-attribute=pure -Wsuggest-attribute=const \
+		-Wsuggest-attribute=noreturn -Wsuggest-final-types \
+		-Wsuggest-final-methods -Wmaybe-uninitialized
+endif
+ifeq ($(CC),clang)
+	WARNINGS += -Wmost -Wheader-hygiene -Widiomatic-parentheses \
+		-Wmove -Wloop-analysis
+endif
+
+CFLAGS_COMMON := $(WARNINGS) -std=c11 -pipe -MMD -MP -D_FORTIFY_SOURCE=2 \
+	$(foreach dir,$(SRCDIR_SUBDIRS),-I$(dir))
+CFLAGS_DEBUG := $(CFLAGS_COMMON) -g -O1 -DDEBUG
+CFLAGS_RELEASE := $(CFLAGS_COMMON) -O2 -ftree-vectorize -DNDEBUG
+
+LD := gcc
+LDFLAGS_COMMON := -Wl,-zdefs -Wl,-znow -Wl,--fatal-warnings
+LDFLAGS_DEBUG := $(LDFLAGS_COMMON)
+LDFLAGS_RELEASE := $(LDFLAGS_COMMON) -Wl,-O1 -Wl,--strip-debug
+
+.PHONY: all debug release
+all: release
+release: $(OUTDIR)/$(EXE)
+debug: $(OUTDIR)/$(EXE:%=%-debug)
+
+$(OUTDIR_SUBDIRS):
+	@mkdir -p $@
+
+# Link the final executables, with distinct suffixes
+$(OUTDIR)/$(EXE): $(OBJS)
+	$(LD) $^ $(LDFLAGS_RELEASE) -o $@
+$(OUTDIR)/$(EXE)-debug: $(OBJS:%.o=%-debug.o)
+	$(LD) $^ $(LDFLAGS_DEBUG) -o $@
+
+# Create the object files, with distinct suffixes
+$(OUTDIR)/%.o: $(SRCDIR)/%.c | $(OUTDIR_SUBDIRS)
+	$(CC) $(CFLAGS_RELEASE) -c $< -o $@
+$(OUTDIR)/%-debug.o: $(SRCDIR)/%.c | $(OUTDIR_SUBDIRS)
+	$(CC) $(CFLAGS_DEBUG) -c $< -o $@
+
+.PHONY: clean
+clean:
+	$(RM) -r $(OUTDIR)
+
+# Ensure changes to header files will trigger rebuilds (-MMD and -MP flags)
+-include $(wildcard $(OUTDIR)/*.d) $(wildcard $(OUTDIR)/**/*.d)
